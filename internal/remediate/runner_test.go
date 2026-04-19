@@ -19,8 +19,10 @@ package remediate
 import (
 	"bytes"
 	"context"
+	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -161,5 +163,51 @@ func TestRunRequiresAtLeastOneEcosystem(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected an ecosystem selection error")
+	}
+}
+
+func TestDiscoverManifestDirsSkipsNestedGitSubmodule(t *testing.T) {
+	root := t.TempDir()
+
+	mustWrite := func(rel, content string) {
+		t.Helper()
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	mustWrite("go.mod", "module example.com/root\n")
+	mustWrite("pkg/go.mod", "module example.com/pkg\n")
+	mustWrite("web/package.json", "{\"name\":\"web\"}\n")
+
+	// Simulate a nested git submodule by creating its own .git marker file.
+	mustWrite("submodule/.git", "gitdir: ../.git/modules/submodule\n")
+	mustWrite("submodule/go.mod", "module example.com/submodule\n")
+	mustWrite("submodule/ui/package.json", "{\"name\":\"submodule-ui\"}\n")
+
+	goDirs, npmDirs, err := discoverManifestDirs(root)
+	if err != nil {
+		t.Fatalf("discoverManifestDirs returned error: %v", err)
+	}
+
+	if slices.Contains(goDirs, filepath.Join(root, "submodule")) {
+		t.Fatalf("expected submodule go.mod to be skipped, got %v", goDirs)
+	}
+	if slices.Contains(npmDirs, filepath.Join(root, "submodule", "ui")) {
+		t.Fatalf("expected submodule package.json to be skipped, got %v", npmDirs)
+	}
+
+	if !slices.Contains(goDirs, root) {
+		t.Fatalf("expected root go.mod to be discovered, got %v", goDirs)
+	}
+	if !slices.Contains(goDirs, filepath.Join(root, "pkg")) {
+		t.Fatalf("expected pkg go.mod to be discovered, got %v", goDirs)
+	}
+	if !slices.Contains(npmDirs, filepath.Join(root, "web")) {
+		t.Fatalf("expected web package.json to be discovered, got %v", npmDirs)
 	}
 }
