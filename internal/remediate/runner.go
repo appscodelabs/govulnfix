@@ -460,6 +460,15 @@ func discoverManifestDirs(root string) ([]string, []string, error) {
 		}
 
 		if d.IsDir() {
+			if path != root {
+				gitMarker := filepath.Join(path, ".git")
+				if _, err := os.Stat(gitMarker); err == nil {
+					return filepath.SkipDir
+				} else if !errors.Is(err, os.ErrNotExist) {
+					return err
+				}
+			}
+
 			switch d.Name() {
 			case ".git", "node_modules", "vendor":
 				return filepath.SkipDir
